@@ -91,7 +91,7 @@ mark { background: var(--warn-soft); color: inherit; border-radius: 2px; }
 </div>
 
 <div id="vHub" class="wrap" hidden></div>
-<div id="frameWrap" hidden><iframe id="frame" title="Раздел"></iframe></div>
+<div id="frameWrap" hidden><iframe id="frame" title="Раздел" allow="clipboard-write"></iframe></div>
 
 <script>
 "use strict";
@@ -252,13 +252,36 @@ function renderSprav() {
 }
 
 /* ---------- sections in iframe ---------- */
-const BRIDGE = `<script>(function(){document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest('a[href="index.html"]');if(a){e.preventDefault();parent.postMessage({baza:"home"},"*");}},true);window.addEventListener("message",function(e){var d=e.data||{};if(d.baza==="open"&&d.ch&&typeof viewChapter==="function"){try{viewChapter(d.ch);}catch(x){}}});})();<\/script>`;
+const BRIDGE = `<script>(function(){
+document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest('a[href="index.html"]');if(a){e.preventDefault();parent.postMessage({baza:"home"},"*");}},true);
+window.addEventListener("message",function(e){var d=e.data||{};if(d.baza==="open"&&d.ch&&typeof viewChapter==="function"){try{viewChapter(d.ch);}catch(x){}}});
+window.reportError=function(ctx){
+ var old=document.getElementById("repBox");if(old)old.remove();
+ var w=document.createElement("div");w.id="repBox";
+ w.style.cssText="position:fixed;inset:0;z-index:50;background:rgba(5,10,14,.6);display:flex;align-items:flex-end;justify-content:center;padding:16px";
+ w.innerHTML='<div style="background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:16px;width:100%;max-width:560px;display:flex;flex-direction:column;gap:10px;margin-bottom:env(safe-area-inset-bottom,0px)">'+
+  '<b style="font-size:18px">Сообщить об ошибке</b>'+
+  '<span style="font-size:14px;color:var(--muted)">Допиши, что не так, нажми «Скопировать» и отправь текст тому, кто выдал тебе доступ к базе.</span>'+
+  '<textarea id="repTxt" rows="7" style="width:100%;font:inherit;font-size:15px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)"></textarea>'+
+  '<span id="repMsg" style="font-size:14px;color:var(--ok);min-height:20px"></span>'+
+  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button id="repX" class="btn">Закрыть</button><button id="repC" class="btn primary">Скопировать</button></div></div>';
+ document.body.appendChild(w);
+ var t=document.getElementById("repTxt");t.value="Ошибка в базе знаний\\nРаздел: "+document.title+"\\n"+ctx+"\\nЧто не так: ";
+ t.focus();t.setSelectionRange(t.value.length,t.value.length);
+ document.getElementById("repX").onclick=function(){w.remove();};
+ w.addEventListener("click",function(e){if(e.target===w)w.remove();});
+ document.getElementById("repC").onclick=function(){var m=document.getElementById("repMsg");
+  var done=function(){m.textContent="Скопировано. Вставь в сообщение и отправь.";};
+  var fall=function(){t.focus();t.select();try{document.execCommand("copy");done();}catch(x){m.textContent="Текст выделен — скопируй его вручную.";}};
+  try{navigator.clipboard.writeText(t.value).then(done,fall);}catch(x){fall();}};
+};
+})();<\/script>`;
 function openSection(id, ch) {
   if (id === "sprav") { hubMode = "sprav"; letter = ""; return renderHub(); }
   const s = DATA.sections.find(x => x.id === id); if (!s || !s.html) return;
   const f = $("#frame");
   f.onload = () => { if (ch) f.contentWindow.postMessage({ baza: "open", ch }, "*"); };
-  f.srcdoc = s.html.replace(/<\/body>/i, BRIDGE + "</body>");
+  f.srcdoc = s.html.replace(/<body([^>]*)>/i, "<body$1>" + BRIDGE);
   $("#frameWrap").hidden = false; $("#vHub").hidden = true;
 }
 window.addEventListener("message", e => {
