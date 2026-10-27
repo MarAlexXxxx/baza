@@ -115,9 +115,15 @@ async function kvDel(k) { try { const db = await idb(); await new Promise((res) 
 
 /* ---------- crypto ---------- */
 async function loadKeys() { const r = await fetch("keys.json", { cache: "no-cache" }); if (!r.ok) throw new Error("keys"); return r.json(); }
-async function loadData(key) {
+async function loadData(key, onp) {
   const r = await fetch("data.enc", { cache: "no-cache" }); if (!r.ok) throw new Error("data");
-  const buf = new Uint8Array(await r.arrayBuffer());
+  let buf;
+  const total = +r.headers.get("content-length") || 0;
+  if (onp && r.body && r.body.getReader) {
+    const rd = r.body.getReader(), parts = []; let got = 0;
+    for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length; onp(got, total); }
+    buf = new Uint8Array(got); let o = 0; for (const x of parts) { buf.set(x, o); o += x.length; }
+  } else buf = new Uint8Array(await r.arrayBuffer());
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: buf.slice(0, 12) }, key, buf.slice(12));
   return JSON.parse(dec.decode(plain));
 }
@@ -156,7 +162,8 @@ $("#fLogin").addEventListener("submit", async e => {
   $("#bLogin").disabled = true; $("#bLogin").textContent = "Проверяю…"; $("#eLogin").textContent = "";
   try {
     const s = await unlock(l, p);
-    DATA = await loadData(s.key); ME = s.name;
+    $("#bLogin").textContent = "Загружаю базу…";
+    DATA = await loadData(s.key, (got, total) => { $("#bLogin").textContent = "Загружаю базу: " + (total ? Math.min(99, Math.round(got / total * 100)) + "%" : (got / 1048576).toFixed(1) + " МБ"); }); ME = s.name;
     if ($("#iRem").checked) await kvSet("sess", { key: s.key, name: s.name, kv: s.kv }); else await kvDel("sess");
     $("#iPass").value = "";
     showHub();
@@ -172,6 +179,9 @@ const IC = {
   sosudy: '<circle cx="12" cy="13" r="7"/><path d="M12 13l4-3"/><path d="M12 3v3"/>',
   strop: '<path d="M12 3v6"/><path d="M6 9h12l-2 6H8z"/><path d="M9 15l-3 6M15 15l3 6"/>',
   gnvp: '<path d="M12 21V9"/><path d="M8 5c0 2 4 2 4 4s4 2 4 0"/><path d="M6 21h12"/>',
+  gsu: '<rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="9" cy="9" r="2.2"/><circle cx="15" cy="9" r="2.2"/><path d="M8 15h8M8 18h5"/>',
+  bos: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M7 6V4h10v2"/><path d="M8 12h8"/>',
+  mos: '<path d="M3 17h18"/><path d="M6 17V9h12v8"/><path d="M9 9V6h6v3"/><circle cx="12" cy="13" r="1.8"/>',
   sprav: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/><path d="M9 8h6M9 12h4"/>'
 };
 function progress(s) {
@@ -217,15 +227,15 @@ function renderSearch(b) {
   const hl = s => { let t = esc(s); words.forEach(w => { t = t.replace(new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi"), "<mark>$1</mark>"); }); return t; };
   const scored = [];
   for (const it of DATA.index) {
-    const hay = norm(it.t + " " + it.b);
+    const hay = norm(it.t + " " + it.b + " " + (it.kw || ""));
     if (!words.every(w => hay.includes(w))) continue;
-    let sc = it.k === "term" ? 100 : it.k === "text" ? 10 : 5;
+    let sc = it.k === "term" ? 100 : it.k === "safe" ? 60 : it.k === "text" ? 10 : 5;
     if (words.every(w => norm(it.t).includes(w))) sc += 50;
     scored.push([sc, it]);
   }
   scored.sort((a, b) => b[0] - a[0]);
   const top = scored.slice(0, 40).map(x => x[1]);
-  const K = { term: "Термин", text: "Материал", q: "Вопрос теста" };
+  const K = { term: "Термин", text: "Материал", q: "Вопрос теста", safe: "Как сделать безопасно" };
   b.innerHTML = top.length ? `<p class="small muted">Найдено: ${scored.length}${scored.length > 40 ? " (показаны первые 40)" : ""}</p><div class="res">${top.map((it, i) => `
     <div class="hit ${it.k === "term" ? "term" : ""}">
       <span class="k">${K[it.k]} · ${esc(it.st)}</span>
@@ -234,7 +244,7 @@ function renderSearch(b) {
       ${it.src ? `<span class="src">Источник: ${esc(it.src)}</span>` : ""}
       ${it.s && it.s !== "sprav" ? `<button class="btn ghost slim" style="align-self:flex-start" data-go="${i}">Открыть в разделе</button>` : ""}
     </div>`).join("")}</div>` : `<div class="panel"><p>Ничего не нашлось.</p><p class="small muted">Попробуй короче или другим словом. Если термина нет — его нет и в загруженных документах; сообщи, и его добавят из нужного СТО.</p></div>`;
-  b.querySelectorAll("[data-go]").forEach(x => x.onclick = () => { const it = top[+x.dataset.go]; openSection(it.s, it.ch); });
+  b.querySelectorAll("[data-go]").forEach(x => x.onclick = () => { const it = top[+x.dataset.go]; openSection(it.s, it.ch, it.sf); });
 }
 function renderSprav() {
   const h = $("#vHub"), G = DATA.glossary;
@@ -276,11 +286,11 @@ window.reportError=function(ctx){
   try{navigator.clipboard.writeText(t.value).then(done,fall);}catch(x){fall();}};
 };
 })();<\/script>`;
-function openSection(id, ch) {
+function openSection(id, ch, sf) {
   if (id === "sprav") { hubMode = "sprav"; letter = ""; return renderHub(); }
   const s = DATA.sections.find(x => x.id === id); if (!s || !s.html) return;
   const f = $("#frame");
-  f.onload = () => { if (ch) f.contentWindow.postMessage({ baza: "open", ch }, "*"); };
+  f.onload = () => { if (sf) f.contentWindow.postMessage({ baza: "open", safe: sf }, "*"); else if (ch) f.contentWindow.postMessage({ baza: "open", ch }, "*"); };
   f.srcdoc = s.html.replace(/<body([^>]*)>/i, "<body$1>" + BRIDGE);
   $("#frameWrap").hidden = false; $("#vHub").hidden = true;
 }
