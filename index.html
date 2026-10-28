@@ -221,9 +221,12 @@ function renderHubBody() {
   }).join("")}</div>`;
   b.querySelectorAll("[data-open]").forEach(x => x.onclick = () => openSection(x.dataset.open));
 }
-const norm = s => String(s).toLowerCase().replace(/ё/g, "е");
+const norm = s => String(s).toLowerCase().replace(/ё/g, "е").replace(/([а-яa-z])[\s-]+(\d)/g, "$1$2");
+const STOPW = new Set("хочу хотим надо нужно как что где делать сделать мне нам можно ли если на в во по с со и или для при это то а но же бы".split(" "));
+const normQ = s => String(s).toLowerCase().replace(/ё/g, "е").replace(/([а-яa-z])[\s-]+(\d)/g, "$1$2");
+const qWords = q => normQ(q).split(/[^а-яa-z0-9.,]+/).filter(w => w.length > 1 && !STOPW.has(w)).map(w => w.length >= 6 ? w.slice(0, Math.max(4, w.length - 3)) : w);
 function renderSearch(b) {
-  const words = norm(query).split(/\s+/).filter(w => w.length > 1);
+  const words = qWords(query);
   const hl = s => { let t = esc(s); words.forEach(w => { t = t.replace(new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi"), "<mark>$1</mark>"); }); return t; };
   const scored = [];
   for (const it of DATA.index) {
