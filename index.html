@@ -136,7 +136,7 @@ window.LOG = (type, section, where, text) => logEvent(type, section, where, text
 /* скрытая метка с логином: глазом не видна, проявляется на скриншоте через «Проявить метку» в админке */
 function wmURL(name) {
   const t = String(name).replace(/[<&"]/g, ""), d = new Date(), ds = String(d.getDate()).padStart(2, "0") + "." + String(d.getMonth() + 1).padStart(2, "0");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><g font-family="Arial" font-weight="700" fill="#808080" fill-opacity="0.028" text-anchor="middle" transform="rotate(-20 100 60)"><text x="100" y="55" font-size="18">${t}</text><text x="100" y="76" font-size="12">${ds}</text></g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><g font-family="Arial" font-weight="700" fill="#808080" fill-opacity="0.012" text-anchor="middle" transform="rotate(-20 100 60)"><text x="100" y="55" font-size="18">${t}</text><text x="100" y="76" font-size="12">${ds}</text></g></svg>`;
   return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
 }
 function applyGuard(doc, name) {
