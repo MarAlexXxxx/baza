@@ -69,7 +69,7 @@ mark { background: var(--warn-soft); color: inherit; border-radius: 2px; }
 .letters { display: flex; flex-wrap: wrap; gap: 4px; }
 .letters button { appearance: none; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; min-width: 34px; min-height: 34px; cursor: pointer; font-family: var(--f-mono); font-weight: 700; }
 /* frame */
-#frameWrap { position: fixed; inset: 0; background: var(--bg); z-index: 10; }
+#frameWrap { position: fixed; left: 0; right: 0; top: 0; height: 100%; height: 100dvh; background: var(--bg); z-index: 10; }
 #frame { width: 100%; height: 100%; border: 0; display: block; }
 .center { min-height: 100%; display: flex; flex-direction: column; justify-content: center; }
 /* защита от копирования */
@@ -133,10 +133,10 @@ async function flushLog() {
 }
 window.addEventListener("online", flushLog); setInterval(flushLog, 60000);
 window.LOG = (type, section, where, text) => logEvent(type, section, where, text);
-/* водяной знак с логином: бледный, не мешает читать, сквозь него всё нажимается */
+/* скрытая метка с логином: глазом не видна, проявляется на скриншоте через «Проявить метку» в админке */
 function wmURL(name) {
-  const t = String(name).replace(/[<&"]/g, "");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="220" height="150"><text x="110" y="80" font-family="Arial" font-size="15" font-weight="700" fill="#7f8c96" fill-opacity="0.11" text-anchor="middle" transform="rotate(-24 110 75)">${t}</text></svg>`;
+  const t = String(name).replace(/[<&"]/g, ""), d = new Date(), ds = String(d.getDate()).padStart(2, "0") + "." + String(d.getMonth() + 1).padStart(2, "0");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><g font-family="Arial" font-weight="700" fill="#808080" fill-opacity="0.028" text-anchor="middle" transform="rotate(-20 100 60)"><text x="100" y="55" font-size="18">${t}</text><text x="100" y="76" font-size="12">${ds}</text></g></svg>`;
   return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
 }
 function applyGuard(doc, name) {
@@ -154,6 +154,16 @@ function applyGuard(doc, name) {
   } catch (x) {}
 }
 window.APPLY_GUARD = applyGuard;
+/* проявление: вычитаем размытую копию (убираем сам рисунок) и усиливаем остаток */
+function revealMark(im, cv) {
+  const W = Math.min(im.naturalWidth, 1400), H = Math.round(im.naturalHeight * W / im.naturalWidth);
+  cv.width = W; cv.height = H; const c = cv.getContext("2d"); c.drawImage(im, 0, 0, W, H);
+  const a = c.getImageData(0, 0, W, H);
+  const b = document.createElement("canvas"); b.width = W; b.height = H; const bc = b.getContext("2d"); bc.filter = "blur(5px)"; bc.drawImage(im, 0, 0, W, H);
+  const bl = bc.getImageData(0, 0, W, H).data, d = a.data;
+  for (let i = 0; i < d.length; i += 4) { const v = (d[i] + d[i + 1] + d[i + 2]) / 3 - (bl[i] + bl[i + 1] + bl[i + 2]) / 3; const g = Math.max(0, Math.min(255, 128 - v * 22)); d[i] = d[i + 1] = d[i + 2] = g; }
+  c.putImageData(a, 0, 0); cv.style.display = "block";
+}
 window.ME_NAME = () => ME;
 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
@@ -266,9 +276,16 @@ function renderAdmin() {
       <span class="small">Ждут отправки: <b>${q.length}</b>${q.length ? " — уйдут, когда появится связь" : ""}.</span>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="aFlush">Отправить сейчас</button><button class="btn" id="aTest">Тестовая запись</button></div>
       <span class="small muted" id="aMsg"></span>
+    </section>
+    <section class="panel" style="display:flex;flex-direction:column;gap:8px">
+      <b>Проявить метку на скриншоте</b>
+      <span class="small">На каждом экране есть невидимая метка: логин и дата. Если увидишь где-то скриншот базы — выбери его здесь, метка проступит.</span>
+      <label class="btn" style="cursor:pointer">Выбрать скриншот<input type="file" id="aImg" accept="image/*" hidden></label>
+      <canvas id="aCv" style="width:100%;height:auto;border-radius:8px;display:none"></canvas>
     </section>`;
   $("#aBack").onclick = () => { hubMode = "home"; renderHub(); };
   $("#aFlush").onclick = async () => { await flushLog(); renderAdmin(); };
+  $("#aImg").onchange = e => { const f = e.target.files[0]; if (!f) return; const im = new Image(); im.onload = () => revealMark(im, $("#aCv")); im.src = URL.createObjectURL(f); };
   $("#aTest").onclick = () => { logEvent("проверка", "Админ", "", "тестовая запись из панели администратора"); $("#aMsg").textContent = "Отправлено — через минуту строка появится в таблице."; };
   window.scrollTo(0, 0);
 }
@@ -349,8 +366,8 @@ function renderSprav() {
 }
 
 /* ---------- sections in iframe ---------- */
-const BRIDGE = `<style>body.nocopy,body.nocopy *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}body.nocopy input,body.nocopy textarea{-webkit-user-select:text;user-select:text}#wm{position:fixed;inset:0;z-index:40;pointer-events:none;background-repeat:repeat}</style><script>(function(){
-var G=function(){try{parent.APPLY_GUARD(document,parent.ME_NAME());}catch(x){}};
+const BRIDGE = `<style>body.nocopy,body.nocopy *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}body.nocopy input,body.nocopy textarea{-webkit-user-select:text;user-select:text}#wm{position:fixed;inset:0;z-index:40;pointer-events:none;background-repeat:repeat}body{padding-top:calc(44px + env(safe-area-inset-top,0px))}#bzTop{position:fixed;left:0;right:0;top:0;z-index:9;height:calc(44px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) max(10px,env(safe-area-inset-right,0px)) 0 max(10px,env(safe-area-inset-left,0px));display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface);border-bottom:1px solid var(--line);font-family:var(--f-body)}#bzTop button{appearance:none;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;min-height:34px;padding:4px 12px;font:600 14px var(--f-body);cursor:pointer}#bzWho{font:600 12px var(--f-mono,monospace);color:var(--muted);letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}</style><script>(function(){
+var G=function(){try{parent.APPLY_GUARD(document,parent.ME_NAME());}catch(x){}try{if(!document.getElementById("bzTop")){var t=document.createElement("div");t.id="bzTop";t.innerHTML='<button type="button" id="bzHome">← Разделы</button><span id="bzWho"></span>';document.body.appendChild(t);document.getElementById("bzWho").textContent="Вход: "+(parent.ME_NAME()||"");document.getElementById("bzHome").onclick=function(){parent.postMessage({baza:"home"},"*");};}}catch(x){}};
 window.baseLog=function(type,where,text){try{parent.LOG(type,document.title,where,text);}catch(x){}};if(document.body)G();else document.addEventListener("DOMContentLoaded",G);
 var REP=/*REP*/{};
 document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest('a[href="index.html"]');if(a){e.preventDefault();parent.postMessage({baza:"home"},"*");}},true);
@@ -388,10 +405,13 @@ function openSection(id, ch, sf) {
   f.onload = () => { if (sf) f.contentWindow.postMessage({ baza: "open", safe: sf }, "*"); else if (ch) f.contentWindow.postMessage({ baza: "open", ch }, "*"); };
   f.srcdoc = s.html.replace(/<body([^>]*)>/i, "<body$1>" + BRIDGE.replace("/*REP*/{}", JSON.stringify(DATA.report || {})));
   $("#frameWrap").hidden = false; $("#vHub").hidden = true;
+  try { history.pushState({ sec: id }, ""); } catch (e) {}
 }
+function closeFrame() { $("#frameWrap").hidden = true; $("#frame").srcdoc = ""; $("#vHub").hidden = false; renderHub(); }
+window.addEventListener("popstate", () => { if (!$("#frameWrap").hidden) closeFrame(); });
 window.addEventListener("message", e => {
   if (e.source !== $("#frame").contentWindow) return;
-  if ((e.data || {}).baza === "home") { $("#frameWrap").hidden = true; $("#frame").srcdoc = ""; $("#vHub").hidden = false; renderHub(); }
+  if ((e.data || {}).baza === "home") { if (history.state && history.state.sec) history.back(); else closeFrame(); }
 });
 
 boot();
