@@ -72,6 +72,10 @@ mark { background: var(--warn-soft); color: inherit; border-radius: 2px; }
 #frameWrap { position: fixed; inset: 0; background: var(--bg); z-index: 10; }
 #frame { width: 100%; height: 100%; border: 0; display: block; }
 .center { min-height: 100%; display: flex; flex-direction: column; justify-content: center; }
+/* защита от копирования */
+body.nocopy, body.nocopy * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+body.nocopy input, body.nocopy textarea { -webkit-user-select: text; user-select: text; }
+#wm { position: fixed; inset: 0; z-index: 30; pointer-events: none; background-repeat: repeat; }
 </style>
 </head>
 <body>
@@ -101,7 +105,55 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
-let DATA = null, KEYINFO = null, ME = "";
+let DATA = null, KEYINFO = null, ME = "", ROLE = "";
+/* журнал: события уходят в Google Форму владельца; без связи копятся на телефоне */
+const QK = "baza-log-q";
+const qLoad = () => { try { return JSON.parse(localStorage.getItem(QK) || "[]"); } catch (e) { return []; } };
+const qSave = q => { try { localStorage.setItem(QK, JSON.stringify(q.slice(-300))); } catch (e) {} };
+function nowStr() { const d = new Date(), z = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`; }
+function logEvent(type, section, where, text) {
+  const F = DATA && DATA.report && DATA.report.form; if (!F || !ME) return false;
+  const q = qLoad(); q.push({ login: ME, type, section: section || "", where: String(where || "").slice(0, 900), text: String(text || "").slice(0, 3000), time: nowStr() }); qSave(q);
+  flushLog(); return true;
+}
+let flushing = false;
+async function flushLog() {
+  const F = DATA && DATA.report && DATA.report.form; if (!F || flushing || !navigator.onLine) return;
+  flushing = true;
+  try {
+    let q = qLoad();
+    while (q.length) {
+      const e = q[0], b = new URLSearchParams();
+      for (const k of Object.keys(F.f)) b.append(F.f[k], e[k] || "");
+      await fetch(F.action, { method: "POST", mode: "no-cors", body: b });
+      q = qLoad(); q.shift(); qSave(q);
+    }
+  } catch (e) { /* нет связи — отправим позже */ }
+  flushing = false;
+}
+window.addEventListener("online", flushLog); setInterval(flushLog, 60000);
+window.LOG = (type, section, where, text) => logEvent(type, section, where, text);
+/* водяной знак с логином: бледный, не мешает читать, сквозь него всё нажимается */
+function wmURL(name) {
+  const t = String(name).replace(/[<&"]/g, "");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="220" height="150"><text x="110" y="80" font-family="Arial" font-size="15" font-weight="700" fill="#7f8c96" fill-opacity="0.11" text-anchor="middle" transform="rotate(-24 110 75)">${t}</text></svg>`;
+  return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
+}
+function applyGuard(doc, name) {
+  try {
+    doc.body.classList.add("nocopy");
+    let w = doc.getElementById("wm"); if (!name) { if (w) w.remove(); return; }
+    if (!w) { w = doc.createElement("div"); w.id = "wm"; w.setAttribute("aria-hidden", "true"); doc.body.appendChild(w); }
+    w.style.backgroundImage = wmURL(name);
+    if (!doc._guard) {
+      doc._guard = 1;
+      doc.addEventListener("contextmenu", e => { if (!e.target.closest("input,textarea")) e.preventDefault(); });
+      doc.addEventListener("dragstart", e => { if (e.target.tagName === "IMG") e.preventDefault(); });
+      doc.addEventListener("copy", e => { const t = e.target; if (!(t && t.closest && t.closest("input,textarea"))) e.preventDefault(); });
+    }
+  } catch (x) {}
+}
+window.APPLY_GUARD = applyGuard;
 window.ME_NAME = () => ME;
 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
@@ -140,20 +192,21 @@ async function unlock(login, pass) {
   let inner;
   try { inner = JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(u.i) }, kek, b64(u.w)))); } catch (e) { throw new Error("bad"); }
   const key = await crypto.subtle.importKey("raw", b64(inner.k), { name: "AES-GCM" }, false, ["decrypt"]);
-  return { key, name: inner.n, kv: keys.kv };
+  return { key, name: inner.n, role: inner.r || "", kv: keys.kv };
 }
 
 /* ---------- boot ---------- */
 async function boot() {
   const saved = await kvGet("sess");
   if (saved && saved.key) {
-    try { DATA = await loadData(saved.key); ME = saved.name; return showHub(); }
+    try { DATA = await loadData(saved.key); ME = saved.name; ROLE = saved.role || ""; logEvent("вход", "", "", "открыл базу (запомненный вход)"); return showHub(); }
     catch (e) { await kvDel("sess"); }
   }
   showLogin();
 }
 function showLogin(msg) {
   ["#vLoad", "#vHub", "#frameWrap"].forEach(s => $(s).hidden = true); $("#vLogin").hidden = false;
+  applyGuard(document, "");
   $("#eLogin").textContent = msg || "";
 }
 $("#fLogin").addEventListener("submit", async e => {
@@ -164,8 +217,9 @@ $("#fLogin").addEventListener("submit", async e => {
   try {
     const s = await unlock(l, p);
     $("#bLogin").textContent = "Загружаю базу…";
-    DATA = await loadData(s.key, (got, total) => { $("#bLogin").textContent = "Загружаю базу: " + (total ? Math.min(99, Math.round(got / total * 100)) + "%" : (got / 1048576).toFixed(1) + " МБ"); }); ME = s.name;
-    if ($("#iRem").checked) await kvSet("sess", { key: s.key, name: s.name, kv: s.kv }); else await kvDel("sess");
+    DATA = await loadData(s.key, (got, total) => { $("#bLogin").textContent = "Загружаю базу: " + (total ? Math.min(99, Math.round(got / total * 100)) + "%" : (got / 1048576).toFixed(1) + " МБ"); }); ME = s.name; ROLE = s.role;
+    if ($("#iRem").checked) await kvSet("sess", { key: s.key, name: s.name, role: s.role, kv: s.kv }); else await kvDel("sess");
+    logEvent("вход", "", "", "вход по паролю");
     $("#iPass").value = "";
     showHub();
   } catch (err) {
@@ -192,21 +246,50 @@ function progress(s) {
   return m;
 }
 let hubMode = "home", query = "", letter = "";
+function renderAdmin() {
+  const h = $("#vHub"), R = DATA.report || {}, q = qLoad();
+  h.innerHTML = `
+    <div class="top"><button class="btn ghost slim" id="aBack">← На главную</button><span class="eyebrow">Администратор</span></div>
+    <h1>Панель администратора</h1>
+    <p class="muted">Видна только тебе. Всё, что делают пользователи, приходит строками в Google-таблицу: логин, тип, раздел, где, текст, время.</p>
+    ${R.sheet ? `<a class="btn primary" href="${esc(R.sheet)}" target="_blank" rel="noopener" style="text-decoration:none">Открыть журнал (Google-таблица)</a>` : `<p class="muted">Журнал не подключён.</p>`}
+    <section class="panel" style="display:flex;flex-direction:column;gap:8px">
+      <b>Что приходит в столбец «Тип»</b>
+      <span class="small"><b>вход</b> — кто и когда открыл базу.</span>
+      <span class="small"><b>замечание</b> — текст из «Сообщить об ошибке», в «Где» — место (глава, вопрос, тренажёр и шаг).</span>
+      <span class="small"><b>тренажёр</b> — какой сценарий или режим пройден и результат («пройден сам», «с показом», «6 из 8»).</span>
+      <span class="small"><b>тест</b> — билет или тренировка и сколько верно.</span>
+      <span class="small muted">В таблице включи фильтр (Данные → Создать фильтр) и выбирай нужный тип или логин.</span>
+    </section>
+    <section class="panel" style="display:flex;flex-direction:column;gap:8px">
+      <b>Этот телефон</b>
+      <span class="small">Ждут отправки: <b>${q.length}</b>${q.length ? " — уйдут, когда появится связь" : ""}.</span>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="aFlush">Отправить сейчас</button><button class="btn" id="aTest">Тестовая запись</button></div>
+      <span class="small muted" id="aMsg"></span>
+    </section>`;
+  $("#aBack").onclick = () => { hubMode = "home"; renderHub(); };
+  $("#aFlush").onclick = async () => { await flushLog(); renderAdmin(); };
+  $("#aTest").onclick = () => { logEvent("проверка", "Админ", "", "тестовая запись из панели администратора"); $("#aMsg").textContent = "Отправлено — через минуту строка появится в таблице."; };
+  window.scrollTo(0, 0);
+}
 function showHub() {
   ["#vLoad", "#vLogin", "#frameWrap"].forEach(s => $(s).hidden = true); $("#vHub").hidden = false;
+  applyGuard(document, ME);
   renderHub();
 }
 function renderHub() {
   const h = $("#vHub");
   if (hubMode === "sprav") return renderSprav();
+  if (hubMode === "admin" && ROLE === "admin") return renderAdmin();
   h.innerHTML = `
-    <div class="top"><span class="eyebrow">${esc(ME ? "Доступ: " + ME : "")}</span><button class="btn ghost slim" id="bOut">Выйти</button></div>
+    <div class="top"><span class="eyebrow">${esc(ME ? "Доступ: " + ME : "")}</span><span style="display:flex;gap:6px">${ROLE === "admin" ? `<button class="btn slim" id="bAdm">Админ</button>` : ""}<button class="btn ghost slim" id="bOut">Выйти</button></span></div>
     <header style="display:flex;flex-direction:column;gap:8px"><h1>База знаний оператора</h1>
       <p class="muted">Материал для подготовки к ежегодной проверке знаний: читай, ищи ответы, проходи тесты.</p></header>
     <input type="search" id="iQ" placeholder="Поиск по всей базе: ОПО, наряд-допуск, УДК…" value="${esc(query)}" aria-label="Поиск по базе">
     <div id="hubBody"></div>
     <p class="small muted">Обновлено: ${esc(DATA.built || "")}<br>Прогресс тестов хранится только на этом устройстве.</p>`;
-  $("#bOut").onclick = async () => { await kvDel("sess"); DATA = null; ME = ""; query = ""; showLogin(); };
+  if ($("#bAdm")) $("#bAdm").onclick = () => { hubMode = "admin"; renderHub(); };
+  $("#bOut").onclick = async () => { await kvDel("sess"); DATA = null; ME = ""; ROLE = ""; hubMode = "home"; query = ""; showLogin(); };
   $("#iQ").oninput = e => { query = e.target.value; renderHubBody(); };
   renderHubBody();
 }
@@ -266,7 +349,9 @@ function renderSprav() {
 }
 
 /* ---------- sections in iframe ---------- */
-const BRIDGE = `<script>(function(){
+const BRIDGE = `<style>body.nocopy,body.nocopy *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}body.nocopy input,body.nocopy textarea{-webkit-user-select:text;user-select:text}#wm{position:fixed;inset:0;z-index:40;pointer-events:none;background-repeat:repeat}</style><script>(function(){
+var G=function(){try{parent.APPLY_GUARD(document,parent.ME_NAME());}catch(x){}};
+window.baseLog=function(type,where,text){try{parent.LOG(type,document.title,where,text);}catch(x){}};if(document.body)G();else document.addEventListener("DOMContentLoaded",G);
 var REP=/*REP*/{};
 document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest('a[href="index.html"]');if(a){e.preventDefault();parent.postMessage({baza:"home"},"*");}},true);
 window.addEventListener("message",function(e){var d=e.data||{};if(d.baza==="open"&&d.ch&&typeof viewChapter==="function"){try{viewChapter(d.ch);}catch(x){}}});
@@ -276,10 +361,10 @@ window.reportError=function(ctx){
  w.style.cssText="position:fixed;inset:0;z-index:50;background:rgba(5,10,14,.6);display:flex;align-items:flex-end;justify-content:center;padding:16px";
  w.innerHTML='<div style="background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:16px;width:100%;max-width:560px;display:flex;flex-direction:column;gap:10px;margin-bottom:env(safe-area-inset-bottom,0px)">'+
   '<b style="font-size:18px">Сообщить об ошибке</b>'+
-  '<span style="font-size:14px;color:var(--muted)">'+(REP.tg||REP.email?'Опиши, что не так, и нажми «Отправить» — сообщение уйдёт тому, кто ведёт базу.':'Допиши, что не так, нажми «Скопировать» и отправь текст тому, кто выдал тебе доступ к базе.')+'</span>'+
+  '<span style="font-size:14px;color:var(--muted)">'+(REP.form||REP.tg||REP.email?'Опиши, что не так, и нажми «Отправить» — сообщение уйдёт тому, кто ведёт базу.':'Допиши, что не так, нажми «Скопировать» и отправь текст тому, кто выдал тебе доступ к базе.')+'</span>'+
   '<textarea id="repTxt" rows="7" style="width:100%;font:inherit;font-size:15px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)"></textarea>'+
   '<span id="repMsg" style="font-size:14px;color:var(--ok);min-height:20px"></span>'+
-  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+(REP.tg?'<button id="repT" class="btn primary" style="grid-column:1/-1">Отправить в Telegram</button>':'')+(REP.email?'<button id="repE" class="btn'+(REP.tg?'':' primary')+'" style="grid-column:1/-1">Отправить на почту</button>':'')+'<button id="repX" class="btn">Закрыть</button><button id="repC" class="btn'+(REP.tg||REP.email?'':' primary')+'">Скопировать</button></div></div>';
+  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+(REP.form?'<button id="repS" class="btn primary" style="grid-column:1/-1">Отправить</button>':'')+(REP.tg?'<button id="repT" class="btn primary" style="grid-column:1/-1">Отправить в Telegram</button>':'')+(REP.email?'<button id="repE" class="btn'+(REP.tg?'':' primary')+'" style="grid-column:1/-1">Отправить на почту</button>':'')+'<button id="repX" class="btn">Закрыть</button><button id="repC" class="btn'+(REP.form||REP.tg||REP.email?'':' primary')+'">Скопировать</button></div></div>';
  document.body.appendChild(w);
  var t=document.getElementById("repTxt");t.value="Ошибка в базе знаний\\nРаздел: "+document.title+"\\n"+ctx+"\\nЧто не так: ";
  t.focus();t.setSelectionRange(t.value.length,t.value.length);
@@ -291,6 +376,7 @@ window.reportError=function(ctx){
   try{navigator.clipboard.writeText(t.value).then(done,fall);}catch(x){fall();}};
  var who=function(){try{return parent.ME_NAME()||"";}catch(x){return "";}};
  var body=function(){return t.value+(who()?"\\nОт: "+who():"");};
+ var bs=document.getElementById("repS");if(bs)bs.onclick=function(){var m=document.getElementById("repMsg");var ok=false;try{ok=parent.LOG("замечание",document.title,ctx,t.value);}catch(x){}if(ok){m.textContent=navigator.onLine?"Отправлено. Спасибо!":"Сохранено — отправится, когда появится связь.";bs.disabled=true;setTimeout(function(){w.remove();},1600);}else m.textContent="Не получилось — нажми «Скопировать» и отправь вручную.";};
  var bt=document.getElementById("repT");if(bt)bt.onclick=function(){var tx=body();try{navigator.clipboard.writeText(tx);}catch(x){}window.open("https://t.me/"+REP.tg.replace(/^@/,"")+"?text="+encodeURIComponent(tx),"_blank");document.getElementById("repMsg").textContent="Откроется чат — текст уже вставлен или скопирован, нажми «Отправить».";};
  var be=document.getElementById("repE");if(be)be.onclick=function(){location.href="mailto:"+REP.email+"?subject="+encodeURIComponent("Ошибка в базе знаний")+"&body="+encodeURIComponent(body());};
 };
