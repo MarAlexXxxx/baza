@@ -102,6 +102,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
 let DATA = null, KEYINFO = null, ME = "";
+window.ME_NAME = () => ME;
 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
   try { navigator.serviceWorker.register("sw.js"); } catch (e) {}
@@ -266,6 +267,7 @@ function renderSprav() {
 
 /* ---------- sections in iframe ---------- */
 const BRIDGE = `<script>(function(){
+var REP=/*REP*/{};
 document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest('a[href="index.html"]');if(a){e.preventDefault();parent.postMessage({baza:"home"},"*");}},true);
 window.addEventListener("message",function(e){var d=e.data||{};if(d.baza==="open"&&d.ch&&typeof viewChapter==="function"){try{viewChapter(d.ch);}catch(x){}}});
 window.reportError=function(ctx){
@@ -274,10 +276,10 @@ window.reportError=function(ctx){
  w.style.cssText="position:fixed;inset:0;z-index:50;background:rgba(5,10,14,.6);display:flex;align-items:flex-end;justify-content:center;padding:16px";
  w.innerHTML='<div style="background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:16px;width:100%;max-width:560px;display:flex;flex-direction:column;gap:10px;margin-bottom:env(safe-area-inset-bottom,0px)">'+
   '<b style="font-size:18px">Сообщить об ошибке</b>'+
-  '<span style="font-size:14px;color:var(--muted)">Допиши, что не так, нажми «Скопировать» и отправь текст тому, кто выдал тебе доступ к базе.</span>'+
+  '<span style="font-size:14px;color:var(--muted)">'+(REP.tg||REP.email?'Опиши, что не так, и нажми «Отправить» — сообщение уйдёт тому, кто ведёт базу.':'Допиши, что не так, нажми «Скопировать» и отправь текст тому, кто выдал тебе доступ к базе.')+'</span>'+
   '<textarea id="repTxt" rows="7" style="width:100%;font:inherit;font-size:15px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)"></textarea>'+
   '<span id="repMsg" style="font-size:14px;color:var(--ok);min-height:20px"></span>'+
-  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button id="repX" class="btn">Закрыть</button><button id="repC" class="btn primary">Скопировать</button></div></div>';
+  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+(REP.tg?'<button id="repT" class="btn primary" style="grid-column:1/-1">Отправить в Telegram</button>':'')+(REP.email?'<button id="repE" class="btn'+(REP.tg?'':' primary')+'" style="grid-column:1/-1">Отправить на почту</button>':'')+'<button id="repX" class="btn">Закрыть</button><button id="repC" class="btn'+(REP.tg||REP.email?'':' primary')+'">Скопировать</button></div></div>';
  document.body.appendChild(w);
  var t=document.getElementById("repTxt");t.value="Ошибка в базе знаний\\nРаздел: "+document.title+"\\n"+ctx+"\\nЧто не так: ";
  t.focus();t.setSelectionRange(t.value.length,t.value.length);
@@ -287,6 +289,10 @@ window.reportError=function(ctx){
   var done=function(){m.textContent="Скопировано. Вставь в сообщение и отправь.";};
   var fall=function(){t.focus();t.select();try{document.execCommand("copy");done();}catch(x){m.textContent="Текст выделен — скопируй его вручную.";}};
   try{navigator.clipboard.writeText(t.value).then(done,fall);}catch(x){fall();}};
+ var who=function(){try{return parent.ME_NAME()||"";}catch(x){return "";}};
+ var body=function(){return t.value+(who()?"\\nОт: "+who():"");};
+ var bt=document.getElementById("repT");if(bt)bt.onclick=function(){var tx=body();try{navigator.clipboard.writeText(tx);}catch(x){}window.open("https://t.me/"+REP.tg.replace(/^@/,"")+"?text="+encodeURIComponent(tx),"_blank");document.getElementById("repMsg").textContent="Откроется чат — текст уже вставлен или скопирован, нажми «Отправить».";};
+ var be=document.getElementById("repE");if(be)be.onclick=function(){location.href="mailto:"+REP.email+"?subject="+encodeURIComponent("Ошибка в базе знаний")+"&body="+encodeURIComponent(body());};
 };
 })();<\/script>`;
 function openSection(id, ch, sf) {
@@ -294,7 +300,7 @@ function openSection(id, ch, sf) {
   const s = DATA.sections.find(x => x.id === id); if (!s || !s.html) return;
   const f = $("#frame");
   f.onload = () => { if (sf) f.contentWindow.postMessage({ baza: "open", safe: sf }, "*"); else if (ch) f.contentWindow.postMessage({ baza: "open", ch }, "*"); };
-  f.srcdoc = s.html.replace(/<body([^>]*)>/i, "<body$1>" + BRIDGE);
+  f.srcdoc = s.html.replace(/<body([^>]*)>/i, "<body$1>" + BRIDGE.replace("/*REP*/{}", JSON.stringify(DATA.report || {})));
   $("#frameWrap").hidden = false; $("#vHub").hidden = true;
 }
 window.addEventListener("message", e => {
