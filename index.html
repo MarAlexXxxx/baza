@@ -136,7 +136,7 @@ window.LOG = (type, section, where, text) => logEvent(type, section, where, text
 /* скрытая метка с логином: глазом не видна, проявляется на скриншоте через «Проявить метку» в админке */
 function wmURL(name) {
   const t = String(name).replace(/[<&"]/g, ""), d = new Date(), ds = String(d.getDate()).padStart(2, "0") + "." + String(d.getMonth() + 1).padStart(2, "0");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><g font-family="Arial" font-weight="700" fill="#808080" fill-opacity="0.012" text-anchor="middle" transform="rotate(-20 100 60)"><text x="100" y="55" font-size="18">${t}</text><text x="100" y="76" font-size="12">${ds}</text></g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><g font-family="Arial" font-weight="700" fill="#808080" fill-opacity="0.009" text-anchor="middle" transform="rotate(-20 100 60)"><text x="100" y="55" font-size="18">${t}</text><text x="100" y="76" font-size="12">${ds}</text></g></svg>`;
   return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
 }
 function applyGuard(doc, name) {
@@ -161,7 +161,7 @@ function revealMark(im, cv) {
   const a = c.getImageData(0, 0, W, H);
   const b = document.createElement("canvas"); b.width = W; b.height = H; const bc = b.getContext("2d"); bc.filter = "blur(5px)"; bc.drawImage(im, 0, 0, W, H);
   const bl = bc.getImageData(0, 0, W, H).data, d = a.data;
-  for (let i = 0; i < d.length; i += 4) { const v = (d[i] + d[i + 1] + d[i + 2]) / 3 - (bl[i] + bl[i + 1] + bl[i + 2]) / 3; const g = Math.max(0, Math.min(255, 128 - v * 22)); d[i] = d[i + 1] = d[i + 2] = g; }
+  for (let i = 0; i < d.length; i += 4) { const v = (d[i] + d[i + 1] + d[i + 2]) / 3 - (bl[i] + bl[i + 1] + bl[i + 2]) / 3; const g = Math.max(0, Math.min(255, 128 - v * 34)); d[i] = d[i + 1] = d[i + 2] = g; }
   c.putImageData(a, 0, 0); cv.style.display = "block";
 }
 window.ME_NAME = () => ME;
