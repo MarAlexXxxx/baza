@@ -1,5 +1,5 @@
 // Офлайн-кэш. Оболочка — из кэша, данные и ключи — сначала из сети (чтобы обновления доходили), без сети — из кэша.
-const VERSION = "mvuo5qtm";
+const VERSION = "mvuzm9gk";
 const CACHE = "baza-" + VERSION;
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg"];
 const FRESH = ["data.enc", "keys.json"];
@@ -13,6 +13,7 @@ self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
   const name = url.pathname.split("/").pop();
+  if (name === "version.json") { e.respondWith(fetch(e.request, { cache: "no-store" })); return; }
   if (FRESH.includes(name)) {
     e.respondWith(fetch(e.request, { cache: "no-cache" }).then(r => { if (r.ok) { const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); } return r; }).catch(() => caches.match(e.request, { ignoreSearch: true })));
     return;

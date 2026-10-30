@@ -76,6 +76,17 @@ mark { background: var(--warn-soft); color: inherit; border-radius: 2px; }
 body.nocopy, body.nocopy * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 body.nocopy input, body.nocopy textarea { -webkit-user-select: text; user-select: text; }
 #wm { position: fixed; inset: 0; z-index: 30; pointer-events: none; background-repeat: repeat; }
+.newtag { font-family: var(--f-mono); font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 2px 6px; margin-left: 8px; vertical-align: 3px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-left: 6px; }
+#newsOv { position: fixed; inset: 0; background: rgba(10,16,20,.55); z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
+#newsOv .sheet { background: var(--surface); color: var(--ink); width: 100%; max-width: 680px; max-height: 86dvh; overflow: auto; border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 14px; }
+#newsOv .ent { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+#newsOv .ent.fresh h3::after { content: "НОВОЕ"; font-family: var(--f-mono); font-size: 10px; font-weight: 700; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 2px 6px; margin-left: 8px; vertical-align: 2px; }
+#newsOv h3 { margin: 0; font-family: var(--f-display); font-size: 18px; }
+#newsOv ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+#updBar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 70; width: min(calc(100% - 32px), 640px); background: var(--steel); color: #fff; border-radius: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; justify-content: space-between; box-shadow: 0 6px 24px rgba(0,0,0,.25); font-size: 15px; }
+#updBar button { appearance: none; border: 0; border-radius: 8px; padding: 8px 12px; font-weight: 700; background: #fff; color: var(--steel); cursor: pointer; min-height: 40px; }
+#updBar .x { background: transparent; color: #fff; min-height: 40px; padding: 8px; }
 </style>
 </head>
 <body>
@@ -289,23 +300,61 @@ function renderAdmin() {
   $("#aTest").onclick = () => { logEvent("проверка", "Админ", "", "тестовая запись из панели администратора"); $("#aMsg").textContent = "Отправлено — через минуту строка появится в таблице."; };
   window.scrollTo(0, 0);
 }
+/* ---------- что нового и обновления ---------- */
+const SEENK = "baza-seen";
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+const CHG = () => (DATA && DATA.changes) || [];
+function unseenCount() { const c = CHG(), seen = lsGet(SEENK); if (!c.length) return 0; const i = c.findIndex(e => e.v === seen); return i < 0 ? (seen ? c.length : 1) : i; }
+function lastChange(id) { const e = CHG().find(e => e.items.some(x => x.s === id)); return e ? e.v : null; }
+function isNewSec(id) { const lv = lastChange(id); if (!lv) return false; const i = CHG().findIndex(e => e.v === lv); return i < 2 && lsGet("baza-op-" + id) !== lv; }
+function showNews(auto) {
+  const c = CHG(); if (!c.length) return;
+  const n = unseenCount(), secT = id => { const x = DATA.sections.find(s => s.id === id); return x ? x.title : "Общее"; };
+  const list = auto ? c.slice(0, Math.max(1, n)) : c;
+  const ov = document.createElement("div"); ov.id = "newsOv";
+  ov.innerHTML = `<div class="sheet" role="dialog" aria-label="Что нового"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><h2>${auto ? "Вышло обновление" : "Что нового"}</h2><button class="btn ghost slim" id="nwX">Закрыть</button></div>
+    ${list.map((e, i) => { const g = {}; e.items.forEach(x => (g[x.s] = g[x.s] || []).push(x.x));
+      return `<div class="ent${i < n ? " fresh" : ""}"><h3>${esc(e.d)}</h3>${Object.entries(g).map(([sid, xs]) => `<div><b class="small">${esc(secT(sid))}</b><ul class="small">${xs.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>`).join("")}</div>`; }).join("")}
+    ${auto && c.length > list.length ? `<button class="btn slim" id="nwAll">Вся история изменений</button>` : ""}
+    <button class="btn primary" id="nwOk">Понятно</button></div>`;
+  document.body.appendChild(ov);
+  const close = () => { lsSet(SEENK, c[0].v); ov.remove(); if (!$("#vHub").hidden) renderHub(); };
+  ov.querySelector("#nwX").onclick = close; ov.querySelector("#nwOk").onclick = close;
+  ov.onclick = e => { if (e.target === ov) close(); };
+  const all = ov.querySelector("#nwAll"); if (all) all.onclick = () => { ov.remove(); showNews(false); };
+}
+let updShown = false;
+async function checkUpd() {
+  if (!DATA || !DATA.build || updShown || !navigator.onLine) return;
+  try { const r = await fetch("version.json?t=" + Date.now(), { cache: "no-store" }); if (!r.ok) return; const j = await r.json();
+    if (j.v && j.v !== DATA.build) { updShown = true; const b = document.createElement("div"); b.id = "updBar";
+      b.innerHTML = `<span>Вышло обновление базы</span><span style="display:flex;gap:4px"><button id="updGo">Обновить</button><button class="x" id="updX" aria-label="Позже">✕</button></span>`;
+      document.body.appendChild(b); b.querySelector("#updGo").onclick = () => location.reload(); b.querySelector("#updX").onclick = () => b.remove(); }
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkUpd(); });
+setInterval(checkUpd, 10 * 60 * 1000);
 function showHub() {
   ["#vLoad", "#vLogin", "#frameWrap"].forEach(s => $(s).hidden = true); $("#vHub").hidden = false;
   applyGuard(document, ME);
   renderHub();
+  if (unseenCount() > 0 && !$("#newsOv")) setTimeout(() => showNews(true), 300);
+  setTimeout(checkUpd, 1500);
 }
 function renderHub() {
   const h = $("#vHub");
   if (hubMode === "sprav") return renderSprav();
   if (hubMode === "admin" && ROLE === "admin") return renderAdmin();
   h.innerHTML = `
-    <div class="top"><span class="eyebrow">${esc(ME ? "Доступ: " + ME : "")}</span><span style="display:flex;gap:6px">${ROLE === "admin" ? `<button class="btn slim" id="bAdm">Админ</button>` : ""}<button class="btn ghost slim" id="bOut">Выйти</button></span></div>
+    <div class="top"><span class="eyebrow">${esc(ME ? "Доступ: " + ME : "")}</span><span style="display:flex;gap:6px">${ROLE === "admin" ? `<button class="btn slim" id="bAdm">Админ</button>` : ""}<button class="btn slim" id="bNews">Что нового${unseenCount() ? '<span class="dot"></span>' : ""}</button><button class="btn ghost slim" id="bOut">Выйти</button></span></div>
     <header style="display:flex;flex-direction:column;gap:8px"><h1>База знаний оператора</h1>
       <p class="muted">Материал для подготовки к ежегодной проверке знаний: читай, ищи ответы, проходи тесты.</p></header>
     <input type="search" id="iQ" placeholder="Поиск по всей базе: ОПО, наряд-допуск, УДК…" value="${esc(query)}" aria-label="Поиск по базе">
     <div id="hubBody"></div>
     <p class="small muted">Обновлено: ${esc(DATA.built || "")}<br>Прогресс тестов хранится только на этом устройстве.</p>`;
   if ($("#bAdm")) $("#bAdm").onclick = () => { hubMode = "admin"; renderHub(); };
+  $("#bNews").onclick = () => showNews(false);
   $("#bOut").onclick = async () => { await kvDel("sess"); DATA = null; ME = ""; ROLE = ""; hubMode = "home"; query = ""; showLogin(); };
   $("#iQ").oninput = e => { query = e.target.value; renderHubBody(); };
   renderHubBody();
@@ -316,7 +365,7 @@ function renderHubBody() {
   b.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px">${DATA.sections.map(s => {
     const m = progress(s);
     const inner = `<span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true">${IC[s.ic] || ""}</svg></span>
-      <div><h2>${esc(s.title)}</h2><p class="small muted">${esc(s.text)}</p>
+      <div><h2>${esc(s.title)}${isNewSec(s.id) ? '<span class="newtag">НОВОЕ</span>' : ""}</h2><p class="small muted">${esc(s.text)}</p>
       ${s.html || s.id === "sprav" ? (m != null ? `<div class="prog"><span>освоено вопросов</span><span>${m} / ${s.total}</span></div><div class="bar"><i style="width:${Math.round(m / s.total * 100)}%"></i></div>` : "") : `<span class="tag">В РАЗРАБОТКЕ</span>`}</div>`;
     return (s.html || s.id === "sprav") ? `<button class="card" data-open="${s.id}">${inner}</button>` : `<div class="card soon">${inner}</div>`;
   }).join("")}</div>`;
@@ -401,6 +450,7 @@ window.reportError=function(ctx){
 function openSection(id, ch, sf) {
   if (id === "sprav") { hubMode = "sprav"; letter = ""; return renderHub(); }
   const s = DATA.sections.find(x => x.id === id); if (!s || !s.html) return;
+  const lv = lastChange(id); if (lv) lsSet("baza-op-" + id, lv);
   const f = $("#frame");
   f.onload = () => { if (sf) f.contentWindow.postMessage({ baza: "open", safe: sf }, "*"); else if (ch) f.contentWindow.postMessage({ baza: "open", ch }, "*"); };
   f.srcdoc = s.html.replace(/<body([^>]*)>/i, "<body$1>" + BRIDGE.replace("/*REP*/{}", JSON.stringify(DATA.report || {})));
