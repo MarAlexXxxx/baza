@@ -1,5 +1,5 @@
 // Офлайн-кэш. Оболочка — из кэша, данные и ключи — сначала из сети (чтобы обновления доходили), без сети — из кэша.
-const VERSION = "mvuebden";
+const VERSION = "mvuo5qtm";
 const CACHE = "baza-" + VERSION;
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg"];
 const FRESH = ["data.enc", "keys.json"];
