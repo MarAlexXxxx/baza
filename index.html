@@ -451,17 +451,19 @@ function openSection(id, ch, sf) {
   if (id === "sprav") { hubMode = "sprav"; letter = ""; return renderHub(); }
   const s = DATA.sections.find(x => x.id === id); if (!s || !s.html) return;
   const lv = lastChange(id); if (lv) lsSet("baza-op-" + id, lv);
-  const f = $("#frame");
+  /* каждый раз новый iframe: смена srcdoc у старого добавляет записи в историю, и «← Разделы» / «Назад» уходили в iframe */
+  const old = $("#frame"); const f = document.createElement("iframe"); f.id = "frame"; f.title = "Раздел"; f.setAttribute("allow", "clipboard-write");
   f.onload = () => { if (sf) f.contentWindow.postMessage({ baza: "open", safe: sf }, "*"); else if (ch) f.contentWindow.postMessage({ baza: "open", ch }, "*"); };
   f.srcdoc = s.html.replace(/<body([^>]*)>/i, "<body$1>" + BRIDGE.replace("/*REP*/{}", JSON.stringify(DATA.report || {})));
+  old.replaceWith(f);
   $("#frameWrap").hidden = false; $("#vHub").hidden = true;
   try { history.pushState({ sec: id }, ""); } catch (e) {}
 }
-function closeFrame() { $("#frameWrap").hidden = true; $("#frame").srcdoc = ""; $("#vHub").hidden = false; renderHub(); }
+function closeFrame() { $("#frameWrap").hidden = true; const o = $("#frame"), n = document.createElement("iframe"); n.id = "frame"; n.title = "Раздел"; n.setAttribute("allow", "clipboard-write"); o.replaceWith(n); $("#vHub").hidden = false; renderHub(); }
 window.addEventListener("popstate", () => { if (!$("#frameWrap").hidden) closeFrame(); });
 window.addEventListener("message", e => {
   if (e.source !== $("#frame").contentWindow) return;
-  if ((e.data || {}).baza === "home") { if (history.state && history.state.sec) history.back(); else closeFrame(); }
+  if ((e.data || {}).baza === "home") { const had = history.state && history.state.sec; closeFrame(); if (had) { try { history.back(); } catch (x) {} } }
 });
 
 boot();
